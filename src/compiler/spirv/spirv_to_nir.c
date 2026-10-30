@@ -103,6 +103,7 @@ static const struct spirv_capabilities implemented_capabilities = {
    .GroupNonUniformArithmetic = true,
    .GroupNonUniformBallot = true,
    .GroupNonUniformClustered = true,
+   .GroupNonUniformPartitionedEXT = true,
    .GroupNonUniformQuad = true,
    .GroupNonUniformRotateKHR = true,
    .GroupNonUniformShuffle = true,
@@ -7385,6 +7386,7 @@ vtn_handle_body_instruction(struct vtn_builder *b, SpvOp opcode,
    case SpvOpSubgroupShuffleDownINTEL:
    case SpvOpSubgroupShuffleUpINTEL:
    case SpvOpSubgroupShuffleXorINTEL:
+   case SpvOpGroupNonUniformPartitionEXT:
    case SpvOpGroupNonUniformRotateKHR:
       vtn_handle_subgroup(b, opcode, w, count);
       break;

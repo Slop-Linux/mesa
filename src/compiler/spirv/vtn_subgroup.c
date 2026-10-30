@@ -49,6 +49,54 @@ vtn_build_subgroup_instr(struct vtn_builder *b,
    return dst;
 }
 
+/* SPV_EXT_shader_subgroup_partitioned: a waterfall over the partitions of
+ * `key` (a value or a partition ballot).  Each iteration takes the key of the
+ * first remaining invocation; the invocations holding it run `body` as the
+ * only active invocations, store its result and leave the loop.
+ */
+static nir_def *
+vtn_partition_waterfall(struct vtn_builder *b, nir_def *key,
+                        const struct glsl_type *type,
+                        nir_def *(*body)(struct vtn_builder *, void *),
+                        void *data)
+{
+   nir_builder *nb = &b->nb;
+   if (key->bit_size == 1)
+      key = nir_b2i32(nb, key);
+   nir_variable *res = nir_local_variable_create(nb->impl, type, "partition");
+   nir_loop *loop = nir_push_loop(nb);
+   {
+      nir_def *first = nir_read_first_invocation(nb, key);
+      nir_push_if(nb, nir_ball_iequal(nb, key, first));
+      {
+         nir_store_var(nb, res, body(b, data), BITFIELD_MASK(glsl_get_vector_elements(type)));
+         nir_jump(nb, nir_jump_break);
+      }
+      nir_pop_if(nb, NULL);
+   }
+   nir_pop_loop(nb, loop);
+   return nir_load_var(nb, res);
+}
+
+static nir_def *
+vtn_partition_ballot(struct vtn_builder *b, void *data)
+{
+   return nir_ballot(&b->nb, 4, 32, nir_imm_true(&b->nb));
+}
+
+struct vtn_partition_op {
+   nir_intrinsic_op op;
+   struct vtn_ssa_value *src;
+   unsigned reduction_op;
+};
+
+static nir_def *
+vtn_partition_op(struct vtn_builder *b, void *data)
+{
+   struct vtn_partition_op *p = data;
+   return vtn_build_subgroup_instr(b, p->op, p->src, NULL, NULL, p->reduction_op, 0)->def;
+}
+
 void
 vtn_handle_subgroup(struct vtn_builder *b, SpvOp opcode,
                     const uint32_t *w, unsigned count)
@@ -56,6 +104,12 @@ vtn_handle_subgroup(struct vtn_builder *b, SpvOp opcode,
    struct vtn_type *dest_type = vtn_get_type(b, w[1]);
 
    switch (opcode) {
+   case SpvOpGroupNonUniformPartitionEXT:
+      vtn_push_nir_ssa(b, w[2],
+                       vtn_partition_waterfall(b, vtn_get_nir_ssa(b, w[3]), dest_type->type,
+                                               vtn_partition_ballot, NULL));
+      break;
+
    case SpvOpGroupNonUniformElect: {
       vtn_fail_if(dest_type->type != glsl_bool_type(),
                   "OpGroupNonUniformElect must return a Bool");
@@ -480,6 +534,21 @@ vtn_handle_subgroup(struct vtn_builder *b, SpvOp opcode,
          assert(count == 7);
          cluster_size = vtn_constant_uint(b, w[6]);
          break;
+      case SpvGroupOperationPartitionedReduceEXT:
+      case SpvGroupOperationPartitionedInclusiveScanEXT:
+      case SpvGroupOperationPartitionedExclusiveScanEXT: {
+         struct vtn_partition_op p = {
+            .op = w[4] == SpvGroupOperationPartitionedReduceEXT ? nir_intrinsic_reduce :
+                  w[4] == SpvGroupOperationPartitionedInclusiveScanEXT ? nir_intrinsic_inclusive_scan :
+                  nir_intrinsic_exclusive_scan,
+            .src = vtn_ssa_value(b, w[5]),
+            .reduction_op = reduction_op,
+         };
+         vtn_push_nir_ssa(b, w[2],
+                          vtn_partition_waterfall(b, vtn_get_nir_ssa(b, w[6]), dest_type->type,
+                                                  vtn_partition_op, &p));
+         return;
+      }
       default:
          UNREACHABLE("Invalid group operation");
       }
