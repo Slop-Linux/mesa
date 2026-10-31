@@ -56,6 +56,8 @@ static const struct spirv_capabilities implemented_capabilities = {
    .ComputeDerivativeGroupQuadsKHR = true,
    .ConstantDataKHR = true,
    .CooperativeMatrixKHR = true,
+   .CooperativeVectorNV = true,
+   .CooperativeVectorTrainingNV = true,
    .CooperativeMatrixConversionsEXT = true,
    .CooperativeMatrixGetCoordinateEXT = true,
    .CooperativeMatrixReductionsEXT = true,
@@ -135,6 +137,7 @@ static const struct spirv_capabilities implemented_capabilities = {
    .InterpolationFunction = true,
    .Kernel = true,
    .Linkage = true,
+   .LongVectorEXT = true,
    .LiteralSampler = true,
    .Matrix = true,
    .MeshShadingEXT = true,
@@ -2120,6 +2123,11 @@ vtn_handle_type(struct vtn_builder *b, SpvOp opcode,
 
       vtn_fail_if(base->base_type != vtn_base_type_scalar,
                   "Base type for OpTypeVector must be a scalar");
+      if (b->options->environment != NIR_SPIRV_OPENCL && elems != 0 &&
+          (elems < 2 || elems > 4)) {
+         vtn_make_long_vector_type(val->type, base, elems);
+         break;
+      }
       vtn_fail_if((elems < 2 || elems > 4) && (elems != 8) && (elems != 16),
                   "Invalid component count for OpTypeVector");
 
@@ -2531,6 +2539,15 @@ vtn_handle_type(struct vtn_builder *b, SpvOp opcode,
    case SpvOpTypeCooperativeMatrixKHR:
       vtn_handle_cooperative_type(b, val, opcode, w, count);
       break;
+
+   case SpvOpTypeVectorIdEXT: {
+      struct vtn_type *base = vtn_get_type(b, w[2]);
+      unsigned elems = vtn_constant_uint(b, w[3]);
+      vtn_fail_if(base->base_type != vtn_base_type_scalar || elems == 0,
+                  "OpTypeVectorIdEXT needs a scalar component type and a non-zero count");
+      vtn_make_long_vector_type(val->type, base, elems);
+      break;
+   }
 
    case SpvOpTypeEvent:
       val->type->base_type = vtn_base_type_event;
@@ -4761,7 +4778,9 @@ vtn_handle_image(struct vtn_builder *b, SpvOp opcode,
       assert(op == nir_intrinsic_image_deref_store ||
              op == nir_intrinsic_image_heap_store);
       intrin->num_components = 4;
-      intrin->src[3] = nir_src_for_ssa(nir_pad_vec4(&b->nb, value->def));
+      /* A long vector texel writes its first four components. */
+      nir_def *texel = value->def ? value->def : vtn_long_vector_head(b, value, 4);
+      intrin->src[3] = nir_src_for_ssa(nir_pad_vec4(&b->nb, texel));
       /* Only OpImageWrite can support a lod parameter if
        * SPV_AMD_shader_image_load_store_lod is used but the current NIR
        * intrinsics definition for atomics requires us to set it for
@@ -4770,7 +4789,7 @@ vtn_handle_image(struct vtn_builder *b, SpvOp opcode,
       intrin->src[4] = nir_src_for_ssa(image.lod);
 
       nir_alu_type src_type =
-         get_image_type(b, nir_get_nir_type_for_glsl_type(value->type), operands);
+         get_image_type(b, nir_get_nir_type_for_glsl_type(glsl_without_array(value->type)), operands);
       nir_intrinsic_set_src_type(intrin, src_type);
       break;
    }
@@ -6434,6 +6453,7 @@ vtn_handle_variable_or_type_instruction(struct vtn_builder *b, SpvOp opcode,
    case SpvOpTypeAccelerationStructureKHR:
    case SpvOpTypeRayQueryKHR:
    case SpvOpTypeCooperativeMatrixKHR:
+   case SpvOpTypeVectorIdEXT:
    case SpvOpTypeUntypedPointerKHR:
    case SpvOpTypeBufferEXT:
    case SpvOpTypeTensorLayoutNV:
@@ -6990,6 +7010,9 @@ vtn_handle_body_instruction(struct vtn_builder *b, SpvOp opcode,
       }
    }
 
+   if (!b->long_vector_split && vtn_handle_long_vector_instruction(b, opcode, w, count))
+      return true;
+
    switch (opcode) {
    case SpvOpLabel:
       break;
@@ -7535,12 +7558,28 @@ vtn_handle_body_instruction(struct vtn_builder *b, SpvOp opcode,
       vtn_handle_cooperative_instruction(b, opcode, w, count);
       break;
 
+   case SpvOpCooperativeVectorLoadNV:
+   case SpvOpCooperativeVectorStoreNV:
+   case SpvOpCooperativeVectorMatrixMulNV:
+   case SpvOpCooperativeVectorMatrixMulAddNV:
+   case SpvOpCooperativeVectorOuterProductAccumulateNV:
+   case SpvOpCooperativeVectorReduceSumAccumulateNV:
+      vtn_handle_cooperative_vector_instruction(b, opcode, w, count);
+      break;
+
    default:
       vtn_fail_with_opcode("Unhandled opcode", opcode);
    }
 
    vtn_assert(b->nb.fp_math_ctrl == nir_fp_fast_math);
    return true;
+}
+
+void
+vtn_dispatch_body_instruction(struct vtn_builder *b, SpvOp opcode,
+                              const uint32_t *w, unsigned count)
+{
+   vtn_handle_body_instruction(b, opcode, w, count);
 }
 
 static bool

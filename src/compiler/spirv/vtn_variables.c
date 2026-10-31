@@ -522,6 +522,17 @@ vtn_pointer_dereference(struct vtn_builder *b,
    return ptr;
 }
 
+/* Pointer to component `index` of the pointed-to long vector. */
+struct vtn_pointer *
+vtn_pointer_element(struct vtn_builder *b, struct vtn_pointer *p, unsigned index)
+{
+   struct vtn_access_chain chain = {
+      .length = 1,
+      .link = { { .mode = vtn_access_mode_literal, .id = index } },
+   };
+   return vtn_pointer_dereference(b, p, &chain);
+}
+
 nir_deref_instr *
 vtn_pointer_to_deref(struct vtn_builder *b, struct vtn_pointer *ptr)
 {

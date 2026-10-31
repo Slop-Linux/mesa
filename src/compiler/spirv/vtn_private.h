@@ -319,6 +319,12 @@ struct vtn_type {
           */
          bool is_builtin:1;
 
+         /* Vector of a component count other than 2..4 (LongVectorEXT) or
+          * OpTypeVectorIdEXT / OpTypeCooperativeVectorNV: an array of the
+          * component type whose operations act per component.
+          */
+         bool long_vector:1;
+
          /* Which built-in to use */
          SpvBuiltIn builtin;
       };
@@ -640,6 +646,9 @@ struct vtn_builder {
    nir_builder nb;
 
    linear_ctx *lin_ctx;
+
+   /* Set while one component of a long vector instruction is emitted. */
+   bool long_vector_split;
 
    /* Used by vtn_fail to jump back to the beginning of SPIR-V compilation */
    jmp_buf fail_jump;
@@ -1108,6 +1117,25 @@ void vtn_emit_make_available_barrier(struct vtn_builder *b, SpvMemoryAccessMask 
 
 void vtn_handle_cooperative_type(struct vtn_builder *b, struct vtn_value *val,
                                  SpvOp opcode, const uint32_t *w, unsigned count);
+static inline bool
+vtn_type_is_long_vector(const struct vtn_type *t)
+{
+   return t->base_type == vtn_base_type_array && t->long_vector;
+}
+
+void vtn_make_long_vector_type(struct vtn_type *t, struct vtn_type *component,
+                               unsigned count);
+void vtn_dispatch_body_instruction(struct vtn_builder *b, SpvOp opcode,
+                                   const uint32_t *w, unsigned count);
+bool vtn_handle_long_vector_instruction(struct vtn_builder *b, SpvOp opcode,
+                                        const uint32_t *w, unsigned count);
+void vtn_handle_cooperative_vector_instruction(struct vtn_builder *b, SpvOp opcode,
+                                               const uint32_t *w, unsigned count);
+nir_def *vtn_long_vector_head(struct vtn_builder *b, struct vtn_ssa_value *v,
+                              unsigned max);
+struct vtn_pointer *vtn_pointer_element(struct vtn_builder *b, struct vtn_pointer *p,
+                                        unsigned index);
+
 void vtn_handle_cooperative_instruction(struct vtn_builder *b, SpvOp opcode,
                                         const uint32_t *w, unsigned count);
 void vtn_handle_cooperative_alu(struct vtn_builder *b, struct vtn_value *dest_val,
