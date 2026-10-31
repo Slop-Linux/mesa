@@ -4779,7 +4779,7 @@ vtn_handle_image(struct vtn_builder *b, SpvOp opcode,
              op == nir_intrinsic_image_heap_store);
       intrin->num_components = 4;
       /* A long vector texel writes its first four components. */
-      nir_def *texel = value->def ? value->def : vtn_long_vector_head(b, value, 4);
+      nir_def *texel = glsl_type_is_vector_or_scalar(value->type) ? value->def : vtn_long_vector_head(b, value, 4);
       intrin->src[3] = nir_src_for_ssa(nir_pad_vec4(&b->nb, texel));
       /* Only OpImageWrite can support a lod parameter if
        * SPV_AMD_shader_image_load_store_lod is used but the current NIR

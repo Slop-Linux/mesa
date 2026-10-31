@@ -46,7 +46,7 @@ flatten(struct vtn_builder *b, struct vtn_ssa_value *v, unsigned *count)
    unsigned n = value_components(v->type);
    nir_def **c = vtn_alloc_array(b, nir_def *, n);
    for (unsigned i = 0; i < n; i++)
-      c[i] = v->def ? nir_channel(&b->nb, v->def, i) : v->elems[i]->def;
+      c[i] = glsl_type_is_vector_or_scalar(v->type) ? nir_channel(&b->nb, v->def, i) : v->elems[i]->def;
    *count = n;
    return c;
 }
@@ -569,6 +569,15 @@ vtn_handle_long_vector_instruction(struct vtn_builder *b, SpvOp opcode,
       split(b, opcode, w, count, 3, 0, nir_op_iand);
       return true;
    }
+
+   /* Invocations of equal vectors: the intersection of the partitions of the
+    * components.
+    */
+   case SpvOpGroupNonUniformPartitionEXT:
+      if (!id_is_long(b, w[3]))
+         return false;
+      split(b, opcode, w, count, 3, 0, nir_op_iand);
+      return true;
 
    case SpvOpVectorExtractDynamic: {
       if (!id_is_long(b, w[3]))
