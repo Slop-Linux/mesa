@@ -3174,7 +3174,7 @@ init_driver_workarounds(struct zink_screen *screen)
    case VK_DRIVER_ID_MESA_PANVK:
    case VK_DRIVER_ID_ARM_PROPRIETARY:
    case VK_DRIVER_ID_QUALCOMM_PROPRIETARY:
-   /* g16-vk (kalium) reports Honeykrisp; LINEAR is its only DRM format modifier */
+   /* g16-vk (m4) reports Honeykrisp; LINEAR is its only DRM format modifier */
    case VK_DRIVER_ID_MESA_HONEYKRISP:
       screen->driver_workarounds.can_do_invalid_linear_modifier = true;
       break;
