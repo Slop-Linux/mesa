@@ -308,6 +308,48 @@ handle_glsl450(struct vtn_builder *b, enum GLSLstd450 op, const uint32_t *w,
    vtn_push_ssa_value(b, w[2], compose(b, res_type->type, c));
 }
 
+/* OpIAddCarry / OpISubBorrow / OpUMulExtended / OpSMulExtended of long vectors: the struct of two long vectors,
+ * per component as vtn_alu.c.
+ */
+static void
+handle_extended(struct vtn_builder *b, SpvOp opcode, const uint32_t *w)
+{
+   nir_builder *nb = &b->nb;
+   struct vtn_type *res_type = vtn_get_type(b, w[1]);
+   vtn_assert(glsl_type_is_struct(res_type->type));
+   unsigned n;
+   nir_def **x = operand(b, w[3], &n), **y = operand(b, w[4], &n);
+   struct vtn_ssa_value *r = vtn_create_ssa_value(b, res_type->type);
+   for (unsigned i = 0; i < n; i++) {
+      nir_def *lo, *hi;
+      switch (opcode) {
+      case SpvOpIAddCarry:
+         lo = nir_iadd(nb, x[i], y[i]);
+         hi = nir_uadd_carry(nb, x[i], y[i]);
+         break;
+      case SpvOpISubBorrow:
+         lo = nir_isub(nb, x[i], y[i]);
+         hi = nir_usub_borrow(nb, x[i], y[i]);
+         break;
+      default: {
+         bool sign = opcode == SpvOpSMulExtended;
+         if (x[i]->bit_size == 32) {
+            nir_def *m = sign ? nir_imul_2x32_64(nb, x[i], y[i]) : nir_umul_2x32_64(nb, x[i], y[i]);
+            lo = nir_unpack_64_2x32_split_x(nb, m);
+            hi = nir_unpack_64_2x32_split_y(nb, m);
+         } else {
+            lo = nir_imul(nb, x[i], y[i]);
+            hi = sign ? nir_imul_high(nb, x[i], y[i]) : nir_umul_high(nb, x[i], y[i]);
+         }
+         break;
+      }
+      }
+      r->elems[0]->elems[i]->def = lo;
+      r->elems[1]->elems[i]->def = hi;
+   }
+   vtn_push_ssa_value(b, w[2], r);
+}
+
 static void
 handle_bitcast(struct vtn_builder *b, const uint32_t *w)
 {
@@ -538,6 +580,15 @@ vtn_handle_long_vector_instruction(struct vtn_builder *b, SpvOp opcode,
          return true;
       }
    }
+
+   case SpvOpIAddCarry:
+   case SpvOpISubBorrow:
+   case SpvOpUMulExtended:
+   case SpvOpSMulExtended:
+      if (!id_is_long(b, w[3]))
+         return false;
+      handle_extended(b, opcode, w);
+      return true;
 
    case SpvOpDot: {
       if (!id_is_long(b, w[3]))
